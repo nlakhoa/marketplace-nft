@@ -30,107 +30,6 @@ import {ListingFormData} from "@/types/marketplace";
 import {convertBNBtoWei} from "@/lib/utils";
 import {Sheet, SheetContent, SheetTrigger} from "@/components/ui/sheet";
 
-
-
-// function createListing(
-//     options: BaseTransactionOptions<CreateListingParams>,
-// ) {
-//     return CreateListing.createListing({
-//         contract: options.contract,
-//         asyncParams: async () => {
-//             const assetContract = getContract({
-//                 ...options.contract,
-//                 address: options.assetContractAddress,
-//             });
-
-//             const rpcClient = getRpcClient(options.contract);
-
-//             const [assetIsERC721, assetIsERC1155, lastestBlock] = await Promise.all([
-//                 isERC721({contract: assetContract}),
-//                 isERC1155({contract: assetContract}),
-//                 eth_getBlockByNumber(rpcClient, {blockTag: "latest"}),
-//             ]);
-
-//             // validate valid asset
-//             if (!assetIsERC721 && !assetIsERC1155) {
-//                 throw new Error("AssetContract must implement ERC 1155 or ERC 721.");
-//             }
-
-//             // validate the timestamps
-//             let startTimestamp = BigInt(
-//                 Math.floor((options.startTimestamp ?? new Date()).getTime() / 1000),
-//             );
-//             const endTimestamp = BigInt(
-//                 Math.floor(
-//                     (
-//                         options.endTimestamp ??
-//                         new Date(Date.now() + 10 * 365 * 24 * 60 * 60 * 1000)
-//                     ).getTime() / 1000,
-//                 ),
-//             );
-
-//             if (startTimestamp <= lastestBlock.timestamp) {
-//                 // set the start time to the next block if it is in the past
-//                 startTimestamp = lastestBlock.timestamp + 1n;
-//             }
-//             if (startTimestamp >= endTimestamp) {
-//                 throw new Error("Start time must be before end time.");
-//             }
-
-//             // valdiate quantity
-//             let quantity: bigint;
-//             if (assetIsERC721) {
-//                 // force quantity to 1 for ERC721s
-//                 quantity = 1n;
-//             } else {
-//                 // otherwise use the provided quantity or default to 1
-//                 quantity = options.quantity ?? 1n;
-//             }
-
-//             // validate price
-//             const currencyAddress =
-//                 options.currencyContractAddress ?? NATIVE_TOKEN_ADDRESS;
-//             let pricePerToken: bigint;
-//             if ("pricePerToken" in options) {
-//                 // for native token, we know decimals are 18
-//                 if (isNativeTokenAddress(currencyAddress)) {
-//                     pricePerToken = toUnits(options.pricePerToken, 18);
-//                 } else {
-//                     // otherwise get the decimals of the currency
-//                     const currencyContract = getContract({
-//                         ...options.contract,
-//                         address: currencyAddress,
-//                     });
-//                     const {decimals} = await import("../../../erc20/read/decimals.js");
-//                     const currencyDecimals = await decimals({
-//                         contract: currencyContract,
-//                     });
-//                     pricePerToken = toUnits(options.pricePerToken, currencyDecimals);
-//                 }
-//             } else {
-//                 pricePerToken = BigInt(options.pricePerTokenWei);
-//             }
-
-//             return {
-//                 params: {
-//                     assetContract: options.assetContractAddress,
-//                     tokenId: options.tokenId,
-//                     currency: options.currencyContractAddress ?? NATIVE_TOKEN_ADDRESS,
-//                     quantity,
-//                     pricePerToken,
-//                     startTimestamp,
-//                     endTimestamp,
-//                     reserved: options.isReservedListing ?? false,
-//                 },
-//                 overrides: {
-//                     extraGas: 50_000n, // add extra gas to account for router call
-//                 },
-//             } as const;
-//         },
-//     });
-// }
-
-
 interface SellFormProps {
     onClose: () => void;
 }
@@ -166,10 +65,12 @@ export function SellForm({onClose}: SellFormProps) {
         defaultValues: {
             price: "",
             tokenId: "",
-
+            nftAddress: "",
         },
     });
 
+
+    const nftAddress = watch("nftAddress");
 
     const {data: receipt, isLoading: isWaitingForReceipt} = useWaitForReceipt({
         client,
@@ -186,7 +87,7 @@ export function SellForm({onClose}: SellFormProps) {
     } = useSendTransaction();
 
     useEffect(() => {
-        if (!process.env.NEXT_PUBLIC_COLLECTION_CONTRACT || !/^0x[a-fA-F0-9]{40}$/.test(process.env.NEXT_PUBLIC_COLLECTION_CONTRACT)) {
+        if (!nftAddress || !/^0x[a-fA-F0-9]{40}$/.test(nftAddress)) {
             setNftContract(null);
             setIsValidContract(false);
             setOwnedNFTs(null);
@@ -197,10 +98,8 @@ export function SellForm({onClose}: SellFormProps) {
             const contract = getContract({
                 client: client,
                 chain: defineChain(97),
-                address: process.env.NEXT_PUBLIC_COLLECTION_CONTRACT as Address,
+                address: nftAddress as Address,
             });
-            console.log('contract', contract);
-
             setNftContract(contract);
             setIsValidContract(true);
         } catch (err) {
@@ -209,7 +108,7 @@ export function SellForm({onClose}: SellFormProps) {
             setIsValidContract(false);
             setOwnedNFTs(null);
         }
-    }, []);
+    }, [nftAddress]);
 
     useEffect(() => {
         const fetchNFTs = async () => {
@@ -274,17 +173,6 @@ export function SellForm({onClose}: SellFormProps) {
             console.error("Error checking approval:", err);
         }
 
-        console.log('data call', {
-            quantity: BigInt(1),
-            contract: marketplaceContract,
-            assetContractAddress: values.nftAddress as Address,
-            tokenId: BigInt(values.tokenId),
-            pricePerTokenWei: String(priceInWei),
-            startTimestamp: new Date(),
-            endTimestamp: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days ahead
-        });
-
-
         const transaction = createListing({
             quantity: BigInt(1),
             contract: marketplaceContract,
@@ -346,8 +234,13 @@ export function SellForm({onClose}: SellFormProps) {
                     <Input
                         id="nftAddress"
                         placeholder="0x..."
-                        value={process.env.NEXT_PUBLIC_COLLECTION_CONTRACT}
-                        disabled
+                        {...register("nftAddress", {
+                            required: "NFT address is required",
+                            pattern: {
+                                value: /^0x[a-fA-F0-9]{40}$/,
+                                message: "Invalid Ethereum address",
+                            },
+                        })}
                     />
                     {errors.nftAddress && (
                         <p className="text-sm text-red-500">{errors.nftAddress.message}</p>
@@ -404,7 +297,7 @@ export function SellForm({onClose}: SellFormProps) {
                     </div>
                 )}
 
-                {process.env.NEXT_PUBLIC_COLLECTION_CONTRACT && !/^0x[a-fA-F0-9]{40}$/.test(process.env.NEXT_PUBLIC_COLLECTION_CONTRACT) && (
+                {nftAddress && !/^0x[a-fA-F0-9]{40}$/.test(nftAddress) && (
                     <div className="rounded-md bg-amber-500/10 border border-amber-500/20 p-4 text-center">
                         <p className="text-sm text-amber-500">
                             Please enter a valid contract address
@@ -429,7 +322,7 @@ export function SellForm({onClose}: SellFormProps) {
                 </div>
 
                 <div className="space-y-2">
-                    <Label htmlFor="price">Price (BNB)</Label>
+                    <Label htmlFor="price">Price (RBTC)</Label>
                     <Input
                         id="price"
                         type="number"
@@ -455,7 +348,7 @@ export function SellForm({onClose}: SellFormProps) {
                 >
                     {!account
                         ? "Connect Wallet First"
-                        : !isValidContract && process.env.NEXT_PUBLIC_COLLECTION_CONTRACT
+                        : !isValidContract && nftAddress
                             ? "Invalid Contract Address"
                             : isPending || isWaitingForReceipt
                                 ? isWaitingForReceipt
